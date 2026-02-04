@@ -1,205 +1,1023 @@
-<!DOCTYPE html>
-<html lang="ru">
-<head>
-<meta charset="UTF-8">
-<title>DS: Full 3D Game</title>
-<meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
-<style>
-body{margin:0;overflow:hidden;background:#111;font-family:Arial;}
-#hp,#weapon,#level{position:fixed;color:#fff;z-index:10;}
-#hp{top:10px;left:10px;}
-#weapon{top:40px;left:10px;}
-#level{top:70px;left:10px;}
-#ui{position:fixed;bottom:10px;left:10px;z-index:10;}
-.btn{background:#222;color:#fff;padding:12px;margin:5px;border-radius:10px;border:1px solid #555;}
-#attack{position:fixed;bottom:20px;right:20px;z-index:10;}
-#loot{position:fixed;bottom:90px;right:20px;z-index:10;}
-</style>
-</head>
-<body>
-<div id="hp">HP: 100</div>
-<div id="weapon">Weapon: FISTS</div>
-<div id="level">Level: 1</div>
+// ==================== GAME VARIABLES ====================
+let player = new THREE.Group();
+let mixer = null;
+let playerHP = 100;
+let weaponType = 'FISTS';
+let hasGun = false;
 
-<div id="ui">
-  <div class="btn" id="up">▲</div>
-  <div class="btn" id="left">◀</div>
-  <div class="btn" id="down">▼</div>
-  <div class="btn" id="right">▶</div>
-</div>
-<div class="btn" id="attack">ATTACK</div>
-<div class="btn" id="loot">LOOT</div>
+let enemies = [];
+let weapons = [];
+let taxi = null;
+let taxiActive = false;
 
-<script src="https://cdn.jsdelivr.net/npm/three@0.158/build/three.min.js"></script>
-<script src="https://cdn.jsdelivr.net/npm/three@0.158/examples/js/loaders/GLTFLoader.js"></script>
+let currentLevel = 1;
+const maxLevel = 20;
+let currentZone = 0;
+const zoneOffsets = [{x:0,z:0},{x:150,z:0},{x:300,z:0},{x:450,z:0}];
 
-<script>
-// ==================== SCENE ====================
-let scene=new THREE.Scene(); scene.background=new THREE.Color(0x111111);
-let camera=new THREE.PerspectiveCamera(75,innerWidth/innerHeight,0.1,1000);
-let renderer=new THREE.WebGLRenderer({antialias:true}); renderer.setSize(innerWidth,innerHeight);
-document.body.appendChild(renderer.domElement);
-window.onresize=()=>{camera.aspect=innerWidth/innerHeight;camera.updateProjectionMatrix();renderer.setSize(innerWidth,innerHeight);};
-
-// ==================== LIGHT ====================
-scene.add(new THREE.AmbientLight(0xffffff,0.6));
-let light=new THREE.DirectionalLight(0xffffff,0.6); light.position.set(5,10,5); scene.add(light);
-
-// ==================== PLAYER ====================
-let player=new THREE.Group(); player.position.set(0,0,0); scene.add(player);
-let playerHP=parseInt(localStorage.getItem('ds_hp'))||100;
-let weaponType=localStorage.getItem('ds_weapon')||'FISTS';
-let hasGun=weaponType!=='FISTS';
-let mixer=null;
-
-// ==================== MODELS LOADER ====================
-let loader=new THREE.GLTFLoader();
-let playerModel=null;
-loader.load('https://cdn.jsdelivr.net/gh/KhronosGroup/glTF-Sample-Models/2.0/Monster/glTF/Monster.gltf',function(gltf){
-  playerModel=gltf.scene; playerModel.scale.set(0.02,0.02,0.02); player.add(playerModel);
-  mixer=new THREE.AnimationMixer(playerModel);
-  if(gltf.animations[0]) mixer.clipAction(gltf.animations[0]).play();
+// ==================== LOAD PLAYER MODEL ====================
+const loader = new THREE.GLTFLoader();
+loader.load('https://cdn.jsdelivr.net/gh/KhronosGroup/glTF-Sample-Models/2.0/Monster/glTF/Monster.gltf', gltf => {
+    player.add(gltf.scene);
+    player.scale.set(0.02,0.02,0.02);
+    mixer = new THREE.AnimationMixer(gltf.scene);
+    if (gltf.animations[0]) mixer.clipAction(gltf.animations[0]).play();
 });
+player.position.set(0,0,0);
+scene.add(player);
 
-// ==================== GAME STATE ====================
-let currentLevel=parseInt(localStorage.getItem('ds_level'))||1;
-let maxLevel=20;
-let currentZone=0;
-let zoneOffsets=[{x:0,z:0},{x:150,z:0},{x:300,z:0},{x:450,z:0}];
-document.getElementById('level').innerText=`Level: ${currentLevel}`;
-
-// ==================== FLOOR ====================
-function createFloor(x,z,color=0x555555){
-  let floor=new THREE.Mesh(new THREE.PlaneGeometry(50,50), new THREE.MeshStandardMaterial({color}));
-  floor.rotation.x=-Math.PI/2; floor.position.set(x,0,z); scene.add(floor);
+// ==================== FLOOR / ZONES ====================
+function createFloor(x,z,color=0x333333){
+    let floor = new THREE.Mesh(
+        new THREE.PlaneGeometry(50,50),
+        new THREE.MeshStandardMaterial({color})
+    );
+    floor.rotation.x = -Math.PI/2;
+    floor.position.set(x,0,z);
+    scene.add(floor);
 }
 
-// ==================== ENEMIES ====================
-let enemies=[];
+// ==================== SPAWN ENEMIES ====================
 function spawnEnemy(x,z,type='dummy',hp=30){
-  let enemy=new THREE.Group();
-  let geometry=new THREE.BoxGeometry(0.5,1.8,0.5);
-  let material=new THREE.MeshStandardMaterial({color:type==='boss'?0x880000:0xff0000});
-  let body=new THREE.Mesh(geometry,material);
-  enemy.add(body);
-  enemy.position.set(x,0.9,z);
-  enemy.type=type; enemy.hp=hp;
-  scene.add(enemy); enemies.push(enemy);
+    const enemy = new THREE.Group();
+    const body = new THREE.Mesh(
+        new THREE.BoxGeometry(0.5,1.8,0.5),
+        new THREE.MeshStandardMaterial({color:type==='boss'?0x880000:0xff0000})
+    );
+    enemy.add(body);
+    enemy.position.set(x,0.9,z);
+    enemy.type = type;
+    enemy.hp = hp;
+    scene.add(enemy);
+    enemies.push(enemy);
 }
 
-// ==================== WEAPONS ====================
-let weapons=[];
+// ==================== SPAWN WEAPONS ====================
 function dropWeapon(x,z,type='pistol'){
-  let w=new THREE.Mesh(new THREE.BoxGeometry(0.3,0.3,0.7), new THREE.MeshStandardMaterial({color:0xffff00}));
-  w.position.set(x,0.15,z); w.weaponType=type; scene.add(w); weapons.push(w);
+    const w = new THREE.Mesh(
+        new THREE.BoxGeometry(0.3,0.3,0.7),
+        new THREE.MeshStandardMaterial({color:0xffff00})
+    );
+    w.position.set(x,0.15,z);
+    w.weaponType = type;
+    scene.add(w);
+    weapons.push(w);
 }
 
-// ==================== TAXI ====================
-let taxi=null; let taxiActive=false;
+// ==================== SPAWN TAXI ====================
 function spawnTaxi(x,z){
-  taxi=new THREE.Mesh(new THREE.BoxGeometry(1.5,1,3), new THREE.MeshStandardMaterial({color:0xffff00}));
-  taxi.position.set(x,0.5,z); scene.add(taxi);
+    taxi = new THREE.Mesh(
+        new THREE.BoxGeometry(1.5,1,3),
+        new THREE.MeshStandardMaterial({color:0xffff00})
+    );
+    taxi.position.set(x,0.5,z);
+    scene.add(taxi);
 }
 
-// ==================== LEVEL MANAGEMENT ====================
+// ==================== LOAD LEVEL ====================
 function loadLevel(level){
-  enemies.forEach(e=>scene.remove(e)); weapons.forEach(w=>scene.remove(w));
-  enemies=[]; weapons=[]; if(taxi) scene.remove(taxi); taxi=null; taxiActive=false;
-  currentZone=Math.floor((level-1)/5); let offset=zoneOffsets[currentZone];
-  createFloor(offset.x, offset.z, 0x333333 + currentZone*0x111111);
+    // remove old
+    enemies.forEach(e=>scene.remove(e));
+    weapons.forEach(w=>scene.remove(w));
+    enemies = []; weapons = [];
+    if(taxi){ scene.remove(taxi); taxi=null; taxiActive=false; }
 
-  let numEnemies=(level%5===0)?6:4;
-  for(let i=0;i<numEnemies;i++){
-    let x=offset.x+Math.random()*10-5; let z=offset.z+Math.random()*10-5;
-    spawnEnemy(x,z);
-  }
-  if(level%5===0){
-    let bossX=offset.x; let bossZ=offset.z;
-    let hp=100 + currentZone*50;
-    spawnEnemy(bossX,bossZ,'boss',hp);
-  }
-  document.getElementById('level').innerText=`Level: ${level}`;
+    currentZone = Math.floor((level-1)/5);
+    const offset = zoneOffsets[currentZone];
+    createFloor(offset.x,offset.z,0x333333 + currentZone*0x111111);
+
+    // spawn enemies
+    let numEnemies = (level%5===0)?6:4;
+    for(let i=0;i<numEnemies;i++){
+        let x = offset.x + Math.random()*10 - 5;
+        let z = offset.z + Math.random()*10 - 5;
+        spawnEnemy(x,z);
+    }
+
+    // boss
+    if(level%5===0){
+        let hp = 100 + currentZone*50;
+        spawnEnemy(offset.x, offset.z,'boss',hp);
+    }
+
+    document.getElementById('level').innerText = `Level: ${level}`;
 }
 
-// ==================== MOVEMENT ====================
-let keys={};
-document.addEventListener('keydown',e=>keys[e.key.toLowerCase()]=true);
-document.addEventListener('keyup',e=>keys[e.key.toLowerCase()]=false);
-function move(dx,dz){ player.position.x+=dx; player.position.z+=dz; }
-document.getElementById('up').onclick=()=>move(0,-0.3);
-document.getElementById('down').onclick=()=>move(0,0.3);
-document.getElementById('left').onclick=()=>move(-0.3,0);
-document.getElementById('right').onclick=()=>move(0.3,0);
+// ==================== PLAYER MOVEMENT ====================
+const keys = {};
+document.addEventListener('keydown', e => keys[e.key.toLowerCase()] = true);
+document.addEventListener('keyup', e => keys[e.key.toLowerCase()] = false);
+function move(dx,dz){
+    player.position.x += dx;
+    player.position.z += dz;
+}
+document.getElementById('up').onclick = ()=>move(0,-0.3);
+document.getElementById('down').onclick = ()=>move(0,0.3);
+document.getElementById('left').onclick = ()=>move(-0.3,0);
+document.getElementById('right').onclick = ()=>move(0.3,0);
 
-// ==================== ATTACK & LOOT ====================
+// ==================== ATTACK / LOOT ====================
 function attack(){
-  enemies.forEach((e,i)=>{
-    let dist=player.position.distanceTo(e.position);
-    if(dist<1.5){
-      e.hp-=(weaponType==='FISTS'?10:30);
-      e.children[0].material.color.set(0xffffff);
-      setTimeout(()=>e.children[0].material.color.set(e.type==='boss'?0x880000:0xff0000),100);
-      if(e.hp<=0){
-        if(e.type!=='boss') dropWeapon(e.position.x,e.position.z,'pistol');
-        scene.remove(e); enemies.splice(i,1);
-        if(e.type==='boss') spawnTaxi(player.position.x+5,player.position.z);
-      }
-    }
-  });
+    enemies.forEach((e,i)=>{
+        let dist = player.position.distanceTo(e.position);
+        if(dist<1.5){
+            e.hp -= (weaponType==='FISTS'?10:30);
+            e.children[0].material.color.set(0xffffff);
+            setTimeout(()=>e.children[0].material.color.set(e.type==='boss'?0x880000:0xff0000),100);
+            if(e.hp<=0){
+                if(e.type!=='boss') dropWeapon(e.position.x,e.position.z,'pistol');
+                scene.remove(e); enemies.splice(i,1);
+                if(e.type==='boss') spawnTaxi(player.position.x+5,player.position.z);
+            }
+        }
+    });
 }
 function loot(){
-  weapons.forEach((w,i)=>{ let dist=player.position.distanceTo(w.position);
-    if(dist<1.5){ weaponType=w.weaponType; hasGun=true; scene.remove(w); weapons.splice(i,1); } });
-  if(taxi){
-    let dist=player.position.distanceTo(taxi.position);
-    if(dist<2){ taxiActive=true; taxi=null; proceedToNextLevel(); }
-  }
+    weapons.forEach((w,i)=>{
+        let dist = player.position.distanceTo(w.position);
+        if(dist<1.5){ weaponType=w.weaponType; hasGun=true; scene.remove(w); weapons.splice(i,1); }
+    });
+    if(taxi){
+        let dist = player.position.distanceTo(taxi.position);
+        if(dist<2){ taxiActive=true; taxi=null; proceedToNextLevel(); }
+    }
 }
-document.getElementById('attack').onclick=attack;
-document.getElementById('loot').onclick=loot;
+document.getElementById('attack').onclick = attack;
+document.getElementById('loot').onclick = loot;
 
-// ==================== CAMERA ====================
-function updateCamera(){ camera.position.set(player.position.x,player.position.y+1.6,player.position.z);
-camera.lookAt(player.position.x,player.position.y+1.6,player.position.z+1); }
+// ==================== AI MOVEMENT ====================
+function updateEnemies(){
+    enemies.forEach(e=>{
+        const dx = player.position.x - e.position.x;
+        const dz = player.position.z - e.position.z;
+        const dist = Math.sqrt(dx*dx + dz*dz);
+        if(dist>0.1){
+            e.position.x += (dx/dist)*0.02;
+            e.position.z += (dz/dist)*0.02;
+        }
+    });
+}
 
 // ==================== LEVEL PROGRESSION ====================
 function proceedToNextLevel(){
-  if(currentLevel<maxLevel){
-    currentLevel++; localStorage.setItem('ds_level',currentLevel);
-    let startX=player.position.x; let startZ=player.position.z;
-    let targetOffset=zoneOffsets[Math.floor((currentLevel-1)/5)];
-    let targetX=targetOffset.x; let targetZ=targetOffset.z;
-    let t=0;
-    let interval=setInterval(()=>{
-      t+=0.02; player.position.x=startX+(targetX-startX)*t; player.position.z=startZ+(targetZ-startZ)*t;
-      if(t>=1){ clearInterval(interval); loadLevel(currentLevel); }
-    },16);
-  } else { alert("Все уровни пройдены! Победа!"); }
+    if(currentLevel<maxLevel){
+        currentLevel++;
+        const startX = player.position.x;
+        const startZ = player.position.z;
+        const target = zoneOffsets[Math.floor((currentLevel-1)/5)];
+        let t = 0;
+        const interval = setInterval(()=>{
+            t+=0.02;
+            player.position.x = startX + (target.x-startX)*t;
+            player.position.z = startZ + (target.z-startZ)*t;
+            if(t>=1){ clearInterval(interval); loadLevel(currentLevel); }
+        },16);
+    } else alert('Все уровни пройдены! Победа!');
 }
 
-// ==================== ANIMATION LOOP ====================
-let clock=new THREE.Clock();
-function animate(){
-  requestAnimationFrame(animate);
-  if(keys['w']) move(0,-0.1);
-  if(keys['s']) move(0,0.1);
-  if(keys['a']) move(-0.1,0);
-  if(keys['d']) move(0.1,0);
-  if(mixer) mixer.update(clock.getDelta());
-  updateCamera();
-  document.getElementById('hp').innerText=`HP: ${playerHP}`;
-  document.getElementById('weapon').innerText=`Weapon: ${weaponType}`;
-  document.getElementById('level').innerText=`Level: ${currentLevel}`;
-  renderer.render(scene,camera);
+// ==================== MAIN LOOP INTEGRATION ====================
+function gameLoop(){
+    requestAnimationFrame(gameLoop);
+    const delta = clock.getDelta();
+    if(mixer) mixer.update(delta);
+    updateEnemies();
+    updateCamera();
+    document.getElementById('hp').innerText = `HP: ${playerHP}`;
+    document.getElementById('weapon').innerText = `Weapon: ${weaponType}`;
+    document.getElementById('level').innerText = `Level: ${currentLevel}`;
+    renderer.render(scene,camera);
 }
-animate();
-
-// ==================== AUTO SAVE ====================
-setInterval(()=>{ localStorage.setItem('ds_hp',playerHP); localStorage.setItem('ds_weapon',weaponType);
-localStorage.setItem('ds_level',currentLevel); },5000);
+gameLoop();
 
 // ==================== INITIAL LEVEL ====================
 loadLevel(currentLevel);
-</script>
-</body>
-</html>
+      // ==================== BOSSES DEFINITIONS ====================
+const bosses = [
+    {
+        name: 'Мафия',
+        zone: 0,
+        hp: 100,
+        lives: 3,
+        weapon: ['лом','AK-47'],
+        skillCooldown: 60, // секунд
+        skillActive: false,
+        summonCount: 3
+    },
+    {
+        name: 'Генерал',
+        zone: 1,
+        hp: 150,
+        lives: 3,
+        weapon: ['Армейский нож','RPG','M40'],
+        skillCooldown: 30,
+        skillActive: false
+    },
+    {
+        name: 'Полиция',
+        zone: 2,
+        hp: 200,
+        lives: 3,
+        weapon: ['M40'],
+        helicopters: []
+    }
+];
+
+// ==================== SPAWN BOSSES ====================
+function spawnBoss(level){
+    const currentZone = Math.floor((level-1)/5);
+    let bossData = bosses.find(b=>b.zone===currentZone);
+    if(!bossData) return;
+
+    const boss = new THREE.Group();
+    const body = new THREE.Mesh(
+        new THREE.BoxGeometry(1,2,1),
+        new THREE.MeshStandardMaterial({color:0x880000})
+    );
+    boss.add(body);
+    boss.position.set(zoneOffsets[currentZone].x,1,bossData.zone*0);
+    boss.type = 'boss';
+    boss.hp = bossData.hp;
+    boss.lives = bossData.lives;
+    bossData.instance = boss;
+    scene.add(boss);
+    enemies.push(boss);
+}
+
+// ==================== BOSSES SKILLS ====================
+function updateBossSkills(){
+    bosses.forEach(bossData=>{
+        if(!bossData.instance) return;
+
+        // Мафия: призыв думиков каждые skillCooldown секунд
+        if(bossData.name==='Мафия'){
+            if(!bossData.lastSkillTime) bossData.lastSkillTime = Date.now();
+            if(Date.now() - bossData.lastSkillTime > bossData.skillCooldown*1000){
+                bossData.lastSkillTime = Date.now();
+                for(let i=0;i<bossData.summonCount;i++){
+                    let x = bossData.instance.position.x + (Math.random()*4-2);
+                    let z = bossData.instance.position.z + (Math.random()*4-2);
+                    spawnEnemy(x,z,'dummy',30);
+                }
+            }
+        }
+
+        // Генерал: на последней полоске HP использует двойное оружие
+        if(bossData.name==='Генерал'){
+            if(bossData.instance.hp<bossData.hp/3 && !bossData.skillActive){
+                bossData.skillActive = true;
+                // Можно визуализировать: ускоренная стрельба
+                setTimeout(()=>bossData.skillActive=false, 10000); // 10 секунд
+            }
+        }
+
+        // Полиция: вертолеты с ракетами
+        if(bossData.name==='Полиция'){
+            if(bossData.helicopters.length===0){
+                for(let i=0;i<3;i++){
+                    let heli = new THREE.Mesh(
+                        new THREE.BoxGeometry(2,0.5,2),
+                        new THREE.MeshStandardMaterial({color:0x4444ff})
+                    );
+                    heli.position.set(bossData.instance.position.x + i*3,10,bossData.instance.position.z + i*3);
+                    scene.add(heli);
+                    bossData.helicopters.push(heli);
+                }
+            } else {
+                // движение вертолетов и атака ракетами
+                bossData.helicopters.forEach(h=>{
+                    h.position.x += Math.sin(Date.now()/1000)*0.05;
+                    // здесь можно добавить спуск ракеты вниз к игроку
+                });
+            }
+        }
+    });
+}
+
+// ==================== UPDATE ENEMIES & BOSSES ====================
+function updateEnemiesAndBosses(){
+    enemies.forEach(e=>{
+        if(e.type==='dummy'){
+            const dx = player.position.x - e.position.x;
+            const dz = player.position.z - e.position.z;
+            const dist = Math.sqrt(dx*dx + dz*dz);
+            if(dist>0.1){
+                e.position.x += (dx/dist)*0.02;
+                e.position.z += (dz/dist)*0.02;
+            }
+        }
+    });
+    updateBossSkills();
+}
+
+// ==================== SPAWN FINAL LEVEL BOSSES ====================
+function spawnFinalLevel(){
+    bosses.forEach(bossData=>{
+        const boss = new THREE.Group();
+        const body = new THREE.Mesh(
+            new THREE.BoxGeometry(1,2,1),
+            new THREE.MeshStandardMaterial({color:0x880000})
+        );
+        boss.add(body);
+        boss.position.set(zoneOffsets[3].x + Math.random()*10-5,1,zoneOffsets[3].z + Math.random()*10-5);
+        boss.type = 'boss';
+        boss.hp = bossData.hp;
+        boss.lives = bossData.lives;
+        bossData.instance = boss;
+        scene.add(boss);
+        enemies.push(boss);
+    });
+}
+
+// ==================== DESTROYED ROOF FOR POLICE STATION ====================
+function createDestroyedRoof(x,z){
+    const roof = new THREE.Mesh(
+        new THREE.BoxGeometry(50,1,50),
+        new THREE.MeshStandardMaterial({color:0x555555})
+    );
+    roof.position.set(x,5,z);
+    roof.rotation.x = Math.random()*0.1;
+    roof.rotation.z = Math.random()*0.1;
+    scene.add(roof);
+}
+
+// ==================== UPDATE GAME LOOP ====================
+function fullGameLoop(){
+    requestAnimationFrame(fullGameLoop);
+    const delta = clock.getDelta();
+    if(mixer) mixer.update(delta);
+
+    updateEnemiesAndBosses();
+    updateCamera();
+
+    document.getElementById('hp').innerText = `HP: ${playerHP}`;
+    document.getElementById('weapon').innerText = `Weapon: ${weaponType}`;
+    document.getElementById('level').innerText = `Level: ${currentLevel}`;
+
+    renderer.render(scene,camera);
+}
+fullGameLoop();
+                  // ==================== WEAPON MODELS ====================
+let playerWeapon = null;
+
+// ==================== LOAD PLAYER WEAPON ====================
+function equipWeapon(type){
+    if(playerWeapon) player.remove(playerWeapon);
+    let color = type==='pistol'?0xffff00:0x00ff00;
+    playerWeapon = new THREE.Mesh(
+        new THREE.BoxGeometry(0.1,0.1,0.5),
+        new THREE.MeshStandardMaterial({color})
+    );
+    playerWeapon.position.set(0.2,1.0,0.5);
+    player.add(playerWeapon);
+    weaponType = type;
+    hasGun = type!=='FISTS';
+}
+equipWeapon('FISTS'); // стартовое оружие
+
+// ==================== ENEMY WEAPON ====================
+function addEnemyWeapon(enemy,type='pistol'){
+    let color = type==='pistol'?0xffff00:0x00ff00;
+    let w = new THREE.Mesh(
+        new THREE.BoxGeometry(0.1,0.1,0.5),
+        new THREE.MeshStandardMaterial({color})
+    );
+    w.position.set(0.3,1,0);
+    enemy.add(w);
+    enemy.weapon = type;
+}
+
+// ==================== BULLET SYSTEM ====================
+const bullets = [];
+function shootBullet(fromX,fromY,fromZ,toX,toZ,damage=10){
+    const bullet = new THREE.Mesh(
+        new THREE.SphereGeometry(0.05,8,8),
+        new THREE.MeshStandardMaterial({color:0xffff00})
+    );
+    bullet.position.set(fromX,fromY,fromZ);
+    bullet.targetX = toX;
+    bullet.targetZ = toZ;
+    bullet.speed = 0.5;
+    bullet.damage = damage;
+    scene.add(bullet);
+    bullets.push(bullet);
+}
+
+// ==================== PLAYER SHOOT ====================
+function playerShoot(){
+    if(!hasGun) return;
+    enemies.forEach(e=>{
+        let dist = player.position.distanceTo(e.position);
+        if(dist<15){
+            shootBullet(player.position.x, player.position.y+1, player.position.z, e.position.x, e.position.z, 20);
+        }
+    });
+}
+
+// ==================== ENEMY SHOOT ====================
+function enemyShoot(enemy){
+    if(!enemy.weapon) return;
+    const dist = player.position.distanceTo(enemy.position);
+    if(dist<10){
+        shootBullet(enemy.position.x,enemy.position.y+1,enemy.position.z,player.position.x,player.position.z,10);
+    }
+}
+
+// ==================== UPDATE BULLETS ====================
+function updateBullets(){
+    for(let i=bullets.length-1;i>=0;i--){
+        const b = bullets[i];
+        const dx = b.targetX - b.position.x;
+        const dz = b.targetZ - b.position.z;
+        const dist = Math.sqrt(dx*dx+dz*dz);
+        if(dist<0.2){
+            // попадание
+            enemies.forEach((e,j)=>{
+                if(e.position.distanceTo(b.position)<1){
+                    e.hp -= b.damage;
+                    if(e.hp<=0){
+                        scene.remove(e);
+                        enemies.splice(j,1);
+                    }
+                }
+            });
+            const d = player.position.distanceTo(b.position);
+            if(d<1){
+                playerHP -= b.damage;
+            }
+            scene.remove(b);
+            bullets.splice(i,1);
+        } else {
+            b.position.x += (dx/dist)*b.speed;
+            b.position.z += (dz/dist)*b.speed;
+        }
+    }
+}
+
+// ==================== ENEMY ACTIONS ====================
+function enemyActions(){
+    enemies.forEach(e=>{
+        if(e.type==='dummy' || e.type==='boss') enemyShoot(e);
+    });
+}
+
+// ==================== INTEGRATE INTO MAIN LOOP ====================
+function enhancedGameLoop(){
+    requestAnimationFrame(enhancedGameLoop);
+    const delta = clock.getDelta();
+    if(mixer) mixer.update(delta);
+
+    updateEnemiesAndBosses();
+    updateBullets();
+    enemyActions();
+    updateCamera();
+
+    document.getElementById('hp').innerText = `HP: ${playerHP}`;
+    document.getElementById('weapon').innerText = `Weapon: ${weaponType}`;
+    document.getElementById('level').innerText = `Level: ${currentLevel}`;
+
+    renderer.render(scene,camera);
+}
+enhancedGameLoop();
+              // ==================== LEVEL & ZONE MANAGEMENT ====================
+const levels = [];
+for(let i=1;i<=20;i++){
+    let zone = Math.floor((i-1)/5);
+    levels.push({
+        level: i,
+        zone: zone,
+        boss: i%5===0,
+        enemiesCount: i%5===0?6:4
+    });
+});
+
+// ==================== CREATE ZONE FLOORS ====================
+function createZoneFloors(){
+    zoneOffsets.forEach((offset,i)=>{
+        let color = 0x333333 + i*0x111111;
+        createFloor(offset.x,offset.z,color);
+
+        // спец. для полицейского участка (разрушенная крыша)
+        if(i===2){
+            createDestroyedRoof(offset.x,offset.z);
+        }
+    });
+}
+createZoneFloors();
+
+// ==================== SPAWN LEVEL ENEMIES & BOSSES ====================
+function spawnLevel(levelIndex){
+    const lvl = levels[levelIndex];
+    const offset = zoneOffsets[lvl.zone];
+
+    // spawn enemies
+    for(let i=0;i<lvl.enemiesCount;i++){
+        let x = offset.x + Math.random()*10 - 5;
+        let z = offset.z + Math.random()*10 - 5;
+        spawnEnemy(x,z);
+    }
+
+    // spawn boss if needed
+    if(lvl.boss){
+        spawnBoss(lvl.level);
+    }
+}
+
+// ==================== TAXI MOVEMENT BETWEEN ZONES ====================
+function moveTaxiToNextZone(){
+    if(!taxi) return;
+    const currentZoneIndex = currentZone;
+    const nextZoneIndex = currentZoneIndex+1;
+    if(nextZoneIndex>=zoneOffsets.length) return;
+
+    const startX = taxi.position.x;
+    const startZ = taxi.position.z;
+    const target = zoneOffsets[nextZoneIndex];
+    let t=0;
+    const interval = setInterval(()=>{
+        t+=0.02;
+        taxi.position.x = startX + (target.x - startX)*t;
+        taxi.position.z = startZ + (target.z - startZ)*t;
+        player.position.x = taxi.position.x;
+        player.position.z = taxi.position.z;
+        if(t>=1){
+            clearInterval(interval);
+            currentZone = nextZoneIndex;
+            spawnLevel(currentLevel);
+        }
+    },16);
+}
+
+// ==================== PLAYER PICKUP & NEXT LEVEL ====================
+function pickupAndNext(){
+    weapons.forEach((w,i)=>{
+        if(player.position.distanceTo(w.position)<1.5){
+            weaponType=w.weaponType;
+            hasGun=true;
+            scene.remove(w);
+            weapons.splice(i,1);
+        }
+    });
+    if(taxi && player.position.distanceTo(taxi.position)<2){
+        moveTaxiToNextZone();
+        currentLevel++;
+        if(currentLevel>20){
+            alert('Вы прошли все уровни! Победа!');
+            currentLevel=20;
+        }
+    }
+}
+
+// ==================== UPDATE ENEMIES, BOSSES & AI ====================
+function updateAllEnemies(){
+    enemies.forEach(e=>{
+        if(e.type==='dummy'){
+            const dx = player.position.x - e.position.x;
+            const dz = player.position.z - e.position.z;
+            const dist = Math.sqrt(dx*dx + dz*dz);
+            if(dist>0.1){
+                e.position.x += (dx/dist)*0.02;
+                e.position.z += (dz/dist)*0.02;
+            }
+        }
+        if(e.type==='boss'){
+            // basic AI for boss movement toward player
+            const dx = player.position.x - e.position.x;
+            const dz = player.position.z - e.position.z;
+            const dist = Math.sqrt(dx*dx + dz*dz);
+            if(dist>1.5){
+                e.position.x += (dx/dist)*0.01;
+                e.position.z += (dz/dist)*0.01;
+            }
+        }
+    });
+    updateBossSkills();
+}
+
+// ==================== CREATE ALL LEVELS ====================
+function initGame(){
+    spawnLevel(currentLevel-1);
+}
+initGame();
+
+// ==================== PLAYER MOVEMENT ====================
+function processPlayerMovement(){
+    if(keys['w']) move(0,-0.1);
+    if(keys['s']) move(0,0.1);
+    if(keys['a']) move(-0.1,0);
+    if(keys['d']) move(0.1,0);
+}
+
+// ==================== ENEMY & BULLET ACTIONS ====================
+function enemiesShoot(){
+    enemies.forEach(e=>{
+        if(e.weapon) enemyShoot(e);
+    });
+}
+function updateGame(){
+    updateAllEnemies();
+    updateBullets();
+    enemiesShoot();
+    pickupAndNext();
+}
+
+// ==================== GAME LOOP INTEGRATION ====================
+function megaGameLoop(){
+    requestAnimationFrame(megaGameLoop);
+    const delta = clock.getDelta();
+    if(mixer) mixer.update(delta);
+
+    processPlayerMovement();
+    updateGame();
+
+    updateCamera();
+
+    document.getElementById('hp').innerText = `HP: ${playerHP}`;
+    document.getElementById('weapon').innerText = `Weapon: ${weaponType}`;
+    document.getElementById('level').innerText = `Level: ${currentLevel}`;
+
+    renderer.render(scene,camera);
+}
+megaGameLoop();
+
+// ==================== SPAWN TAXI AFTER BOSS ====================
+function checkBossDeathForTaxi(){
+    enemies.forEach((e,i)=>{
+        if(e.type==='boss' && e.hp<=0){
+            if(!taxi){
+                spawnTaxi(player.position.x+5,player.position.z);
+            }
+        }
+    });
+}
+setInterval(checkBossDeathForTaxi,1000);
+
+// ==================== AUTO SAVE GAME STATE ====================
+setInterval(()=>{
+    localStorage.setItem('ds_hp',playerHP);
+    localStorage.setItem('ds_weapon',weaponType);
+    localStorage.setItem('ds_level',currentLevel);
+},5000);
+          // ==================== VISUAL EFFECTS ====================
+
+// ==================== MUZZLE FLASH ====================
+const muzzleFlashes = [];
+function createMuzzleFlash(x,y,z){
+    const flash = new THREE.Mesh(
+        new THREE.SphereGeometry(0.1,8,8),
+        new THREE.MeshStandardMaterial({color:0xffaa00, emissive:0xff5500})
+    );
+    flash.position.set(x,y,z);
+    scene.add(flash);
+    muzzleFlashes.push({mesh:flash,time:Date.now()});
+}
+
+// ==================== BULLET HIT EFFECT ====================
+const hitEffects = [];
+function createHitEffect(x,y,z){
+    const hit = new THREE.Mesh(
+        new THREE.SphereGeometry(0.15,8,8),
+        new THREE.MeshStandardMaterial({color:0xff0000, emissive:0xaa0000})
+    );
+    hit.position.set(x,y,z);
+    scene.add(hit);
+    hitEffects.push({mesh:hit,time:Date.now()});
+}
+
+// ==================== UPDATE EFFECTS ====================
+function updateEffects(){
+    const now = Date.now();
+    for(let i=muzzleFlashes.length-1;i>=0;i--){
+        if(now - muzzleFlashes[i].time>50){
+            scene.remove(muzzleFlashes[i].mesh);
+            muzzleFlashes.splice(i,1);
+        }
+    }
+    for(let i=hitEffects.length-1;i>=0;i--){
+        if(now - hitEffects[i].time>150){
+            scene.remove(hitEffects[i].mesh);
+            hitEffects.splice(i,1);
+        }
+    }
+}
+
+// ==================== ENHANCED SHOOTING ====================
+function playerShootEnhanced(){
+    if(!hasGun) return;
+    enemies.forEach(e=>{
+        const dist = player.position.distanceTo(e.position);
+        if(dist<15){
+            shootBullet(player.position.x, player.position.y+1, player.position.z, e.position.x, e.position.z, 20);
+            createMuzzleFlash(player.position.x + 0.2, player.position.y+1, player.position.z + 0.5);
+        }
+    });
+}
+
+function enemyShootEnhanced(enemy){
+    if(!enemy.weapon) return;
+    const dist = player.position.distanceTo(enemy.position);
+    if(dist<10){
+        shootBullet(enemy.position.x,enemy.position.y+1,enemy.position.z,player.position.x,player.position.z,10);
+        createMuzzleFlash(enemy.position.x, enemy.position.y+1, enemy.position.z);
+    }
+}
+
+// ==================== BULLET UPDATE WITH HIT EFFECT ====================
+function updateBulletsEnhanced(){
+    for(let i=bullets.length-1;i>=0;i--){
+        const b = bullets[i];
+        const dx = b.targetX - b.position.x;
+        const dz = b.targetZ - b.position.z;
+        const dist = Math.sqrt(dx*dx+dz*dz);
+        if(dist<0.2){
+            // hit effect
+            createHitEffect(b.position.x,b.position.y,b.position.z);
+
+            enemies.forEach((e,j)=>{
+                if(e.position.distanceTo(b.position)<1){
+                    e.hp -= b.damage;
+                    if(e.hp<=0){
+                        scene.remove(e);
+                        enemies.splice(j,1);
+                        if(e.type==='boss') spawnTaxi(player.position.x+5,player.position.z);
+                    }
+                }
+            });
+
+            const d = player.position.distanceTo(b.position);
+            if(d<1){
+                playerHP -= b.damage;
+            }
+            scene.remove(b);
+            bullets.splice(i,1);
+        } else {
+            b.position.x += (dx/dist)*b.speed;
+            b.position.z += (dz/dist)*b.speed;
+        }
+    }
+}
+
+// ==================== FINAL LEVEL SPAWN ====================
+function spawnFinalBattle(){
+    // spawn all bosses together in zone 3
+    bosses.forEach(bossData=>{
+        const boss = new THREE.Group();
+        const body = new THREE.Mesh(
+            new THREE.BoxGeometry(1,2,1),
+            new THREE.MeshStandardMaterial({color:0x880000})
+        );
+        boss.add(body);
+        boss.position.set(zoneOffsets[3].x + Math.random()*10-5,1,zoneOffsets[3].z + Math.random()*10-5);
+        boss.type='boss';
+        boss.hp = bossData.hp;
+        boss.lives = bossData.lives;
+        bossData.instance = boss;
+        scene.add(boss);
+        enemies.push(boss);
+
+        // add weapons for bosses visually
+        addEnemyWeapon(boss, bossData.weapon[0]);
+    });
+
+    // destroyed roof
+    createDestroyedRoof(zoneOffsets[3].x, zoneOffsets[3].z);
+}
+
+// ==================== INTEGRATE EFFECTS INTO MAIN LOOP ====================
+function megaEnhancedGameLoop(){
+    requestAnimationFrame(megaEnhancedGameLoop);
+    const delta = clock.getDelta();
+    if(mixer) mixer.update(delta);
+
+    processPlayerMovement();
+    updateAllEnemies();
+    updateBulletsEnhanced();
+    enemiesShootEnhanced();
+    pickupAndNext();
+    updateEffects();
+
+    updateCamera();
+
+    document.getElementById('hp').innerText = `HP: ${playerHP}`;
+    document.getElementById('weapon').innerText = `Weapon: ${weaponType}`;
+    document.getElementById('level').innerText = `Level: ${currentLevel}`;
+
+    renderer.render(scene,camera);
+}
+megaEnhancedGameLoop();
+
+// ==================== ENEMY SHOOT ENHANCED ====================
+function enemiesShootEnhanced(){
+    enemies.forEach(e=>{
+        if(e.type==='dummy' || e.type==='boss'){
+            enemyShootEnhanced(e);
+        }
+    });
+}
+
+// ==================== PLAYER SHOOT TRIGGER ====================
+document.getElementById('attack').onclick = ()=>{
+    playerShootEnhanced();
+};
+document.addEventListener('keydown', e=>{
+    if(e.key===' ') playerShootEnhanced(); // space key shoot
+});
+
+// ==================== START FINAL BATTLE ====================
+if(currentLevel===20){
+    spawnFinalBattle();
+}
+              // ==================== AUDIO SYSTEM ====================
+const listener = new THREE.AudioListener();
+camera.add(listener);
+
+const audioLoader = new THREE.AudioLoader();
+const sounds = {};
+
+function loadSounds(){
+    const soundFiles = {
+        shoot: 'https://cdn.jsdelivr.net/gh/freeCodeCamp/cdn/audio/shoot.mp3',
+        hit: 'https://cdn.jsdelivr.net/gh/freeCodeCamp/cdn/audio/hit.mp3',
+        explosion: 'https://cdn.jsdelivr.net/gh/freeCodeCamp/cdn/audio/explosion.mp3',
+        taxi: 'https://cdn.jsdelivr.net/gh/freeCodeCamp/cdn/audio/taxi.mp3'
+    };
+    for(let key in soundFiles){
+        const audio = new THREE.Audio(listener);
+        audioLoader.load(soundFiles[key], buffer=>{
+            audio.setBuffer(buffer);
+            audio.setVolume(0.5);
+        });
+        sounds[key] = audio;
+    }
+}
+loadSounds();
+
+// ==================== PLAY SOUND ====================
+function playSound(name){
+    if(sounds[name]) sounds[name].play();
+}
+
+// ==================== ENHANCED ENEMY AI ====================
+function bossAI(boss){
+    if(!boss.weapon) return;
+    const dist = player.position.distanceTo(boss.position);
+    if(dist<15){
+        if(Math.random()<0.02){
+            shootBullet(boss.position.x, boss.position.y+1, boss.position.z, player.position.x, player.position.z, 20);
+            createMuzzleFlash(boss.position.x,boss.position.y+1,boss.position.z);
+            playSound('shoot');
+        }
+    }
+}
+
+function dummyAI(dummy){
+    const dist = player.position.distanceTo(dummy.position);
+    if(dist<10 && Math.random()<0.01){
+        shootBullet(dummy.position.x,dummy.position.y+1,dummy.position.z,player.position.x,player.position.z,10);
+        createMuzzleFlash(dummy.position.x,dummy.position.y+1,dummy.position.z);
+        playSound('shoot');
+    }
+}
+
+// ==================== ENEMY ACTIONS FINAL ====================
+function updateEnemiesFinal(){
+    enemies.forEach(e=>{
+        if(e.type==='boss') bossAI(e);
+        if(e.type==='dummy') dummyAI(e);
+    });
+}
+
+// ==================== PLAYER WEAPON ANIMATION ====================
+function animatePlayerWeapon(){
+    if(playerWeapon && hasGun){
+        const t = Date.now()/200;
+        playerWeapon.rotation.x = Math.sin(t)*0.2;
+        playerWeapon.rotation.z = Math.cos(t)*0.2;
+    }
+}
+
+// ==================== BULLETS & HIT EFFECTS FINAL ====================
+function updateBulletsFinal(){
+    for(let i=bullets.length-1;i>=0;i--){
+        const b = bullets[i];
+        const dx = b.targetX - b.position.x;
+        const dz = b.targetZ - b.position.z;
+        const dist = Math.sqrt(dx*dx+dz*dz);
+        if(dist<0.2){
+            createHitEffect(b.position.x,b.position.y,b.position.z);
+            playSound('hit');
+
+            enemies.forEach((e,j)=>{
+                if(e.position.distanceTo(b.position)<1){
+                    e.hp -= b.damage;
+                    if(e.hp<=0){
+                        scene.remove(e);
+                        enemies.splice(j,1);
+                        if(e.type==='boss') {
+                            spawnTaxi(player.position.x+5,player.position.z);
+                            playSound('taxi');
+                        }
+                    }
+                }
+            });
+
+            const d = player.position.distanceTo(b.position);
+            if(d<1) playerHP -= b.damage;
+
+            scene.remove(b);
+            bullets.splice(i,1);
+        } else {
+            b.position.x += (dx/dist)*b.speed;
+            b.position.z += (dz/dist)*b.speed;
+        }
+    }
+}
+
+// ==================== RPG / M40 SPECIAL EFFECTS ====================
+function rocketExplosion(x,y,z){
+    const explosion = new THREE.Mesh(
+        new THREE.SphereGeometry(1,16,16),
+        new THREE.MeshStandardMaterial({color:0xff3300, emissive:0xff0000})
+    );
+    explosion.position.set(x,y,z);
+    scene.add(explosion);
+    playSound('explosion');
+    setTimeout(()=>scene.remove(explosion),500);
+    // damage nearby enemies
+    enemies.forEach((e,i)=>{
+        if(e.position.distanceTo(explosion.position)<3){
+            e.hp -= 50;
+            if(e.hp<=0){
+                scene.remove(e);
+                enemies.splice(i,1);
+            }
+        }
+    });
+}
+
+// ==================== PLAYER SPECIAL WEAPON FIRE ====================
+function playerSpecialFire(){
+    if(weaponType==='RPG' || weaponType==='M40'){
+        const targetX = player.position.x + 5;
+        const targetZ = player.position.z;
+        shootBullet(player.position.x,player.position.y+1,player.position.z,targetX, targetZ,50);
+        rocketExplosion(targetX,player.position.y, targetZ);
+    }
+}
+
+// ==================== FINAL LEVEL CHECK ====================
+function checkFinalVictory(){
+    if(currentLevel===20 && enemies.length===0){
+        alert('Все боссы побеждены! Вы выиграли!');
+    }
+}
+
+// ==================== FINAL GAME LOOP ====================
+function finalMegaLoop(){
+    requestAnimationFrame(finalMegaLoop);
+    const delta = clock.getDelta();
+    if(mixer) mixer.update(delta);
+
+    processPlayerMovement();
+    updateAllEnemies();
+    updateEnemiesFinal();
+    updateBulletsFinal();
+    enemiesShootEnhanced();
+    animatePlayerWeapon();
+    pickupAndNext();
+    updateEffects();
+    checkFinalVictory();
+
+    updateCamera();
+
+    document.getElementById('hp').innerText = `HP: ${playerHP}`;
+    document.getElementById('weapon').innerText = `Weapon: ${weaponType}`;
+    document.getElementById('level').innerText = `Level: ${currentLevel}`;
+
+    renderer.render(scene,camera);
+}
+finalMegaLoop();
+
+// ==================== PLAYER INPUT FINAL ====================
+document.getElementById('attack').onclick = ()=>{
+    playerShootEnhanced();
+    if(weaponType==='RPG' || weaponType==='M40') playerSpecialFire();
+};
+document.addEventListener('keydown', e=>{
+    if(e.key===' ') playerShootEnhanced();
+    if(e.key==='r') playerSpecialFire();
+});
+              // ==================== FINAL CLEANUP ====================
+// Убедиться, что при выходе из игры все интервалы очищены
+window.addEventListener('beforeunload', ()=>{
+    bullets.length = 0;
+    enemies.length = 0;
+    if(taxi) scene.remove(taxi);
+});
+
+// ==================== FINAL RENDER CALL ====================
+// Рендер последнего кадра, чтобы сцена точно обновилась
+renderer.render(scene, camera);
+
+// ==================== GAME READY ====================
+console.log("Игра загружена. Готово к запуску!"); 
+      
