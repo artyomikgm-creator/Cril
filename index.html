@@ -1,0 +1,189 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+<meta charset="UTF-8">
+<title>DS: Clearing Ultimate Full</title>
+<meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
+<style>
+body { margin:0; overflow:hidden; background:#111; font-family:Arial; }
+#hp { position:fixed; top:10px; left:10px; color:#fff; z-index:10; }
+#weapon { position:fixed; top:40px; left:10px; color:#fff; z-index:10; }
+#level { position:fixed; top:70px; left:10px; color:#fff; z-index:10; }
+#ui { position:fixed; bottom:10px; left:10px; z-index:10; }
+.btn { background:#222; color:#fff; padding:12px; margin:5px; border-radius:10px; border:1px solid #555; }
+#attack { position:fixed; bottom:20px; right:20px; z-index:10; }
+#loot { position:fixed; bottom:90px; right:20px; z-index:10; }
+</style>
+</head>
+<body>
+<div id="hp">HP: 100</div>
+<div id="weapon">Weapon: FISTS</div>
+<div id="level">Level: 1</div>
+<div id="ui">
+  <div class="btn" id="up">▲</div>
+  <div class="btn" id="left">◀</div>
+  <div class="btn" id="down">▼</div>
+  <div class="btn" id="right">▶</div>
+</div>
+<div class="btn" id="attack">ATTACK</div>
+<div class="btn" id="loot">LOOT</div>
+
+<script src="https://cdn.jsdelivr.net/npm/three@0.158/build/three.min.js"></script>
+<script>
+// ==================== SCENE ====================
+let scene = new THREE.Scene();
+scene.background = new THREE.Color(0x111111);
+let camera = new THREE.PerspectiveCamera(75, innerWidth/innerHeight, 0.1, 1000);
+let renderer = new THREE.WebGLRenderer({antialias:true});
+renderer.setSize(innerWidth, innerHeight);
+document.body.appendChild(renderer.domElement);
+window.onresize=()=>{ camera.aspect=innerWidth/innerHeight; camera.updateProjectionMatrix(); renderer.setSize(innerWidth,innerHeight); };
+
+// ==================== LIGHT ====================
+scene.add(new THREE.AmbientLight(0xffffff,0.6));
+let light=new THREE.DirectionalLight(0xffffff,0.6); light.position.set(5,10,5); scene.add(light);
+
+// ==================== PLAYER ====================
+let player = new THREE.Object3D(); player.position.set(0,0,0); scene.add(player);
+let playerHP = parseInt(localStorage.getItem('ds_hp'))||100;
+let weaponType = localStorage.getItem('ds_weapon')||'FISTS';
+let hasGun = weaponType!=='FISTS';
+
+// ==================== GAME STATE ====================
+let currentLevel = parseInt(localStorage.getItem('ds_level'))||1;
+let maxLevel = 20;
+let currentZone=0;
+let zoneOffsets = [{x:0,z:0},{x:150,z:0},{x:300,z:0},{x:450,z:0}];
+document.getElementById('level').innerText = `Level: ${currentLevel}`;
+
+// ==================== FLOOR ====================
+function createFloor(x,z){
+  let floor=new THREE.Mesh(new THREE.PlaneGeometry(50,50), new THREE.MeshStandardMaterial({color:0x333333}));
+  floor.rotation.x=-Math.PI/2; floor.position.set(x,0,z); scene.add(floor);
+}
+
+// ==================== ENEMIES & BOSSES ====================
+let enemies=[];
+function spawnEnemy(x,z,type='dummy',hp=30){
+  let color=type==='boss'?0x880000:0xff0000;
+  let e=new THREE.Mesh(new THREE.BoxGeometry(0.5,1.8,0.5),new THREE.MeshStandardMaterial({color}));
+  e.position.set(x,0.9,z); e.hp=hp; e.type=type; scene.add(e); enemies.push(e);
+}
+
+// ==================== WEAPONS ====================
+let weapons=[];
+function dropWeapon(x,z,type='pistol'){
+  let w=new THREE.Mesh(new THREE.BoxGeometry(0.3,0.3,0.7),new THREE.MeshStandardMaterial({color:0xffff00}));
+  w.position.set(x,0.15,z); w.weaponType=type; scene.add(w); weapons.push(w);
+}
+
+// ==================== TAXI ====================
+let taxi=null; let taxiActive=false;
+function spawnTaxi(x,z){
+  taxi=new THREE.Mesh(new THREE.BoxGeometry(1.5,1,3), new THREE.MeshStandardMaterial({color:0xffff00}));
+  taxi.position.set(x,0.5,z); scene.add(taxi);
+}
+
+// ==================== LEVEL MANAGEMENT ====================
+function loadLevel(level){
+  enemies.forEach(e=>scene.remove(e)); weapons.forEach(w=>scene.remove(w));
+  enemies=[]; weapons=[]; if(taxi) scene.remove(taxi); taxi=null; taxiActive=false;
+  currentZone=Math.floor((level-1)/5); let offset=zoneOffsets[currentZone];
+  createFloor(offset.x, offset.z);
+
+  // спавн врагов и босса по зоне
+  let numEnemies = (level%5===0)?6:4;
+  for(let i=0;i<numEnemies;i++){
+    let x=offset.x+Math.random()*10-5; let z=offset.z+Math.random()*10-5;
+    spawnEnemy(x,z);
+  }
+  if(level%5===0){ // босс
+    let bossX=offset.x; let bossZ=offset.z;
+    let hp = 100; if(currentZone===1) hp=150; if(currentZone===2) hp=200; if(currentZone===3) hp=250;
+    spawnEnemy(bossX,bossZ,'boss',hp);
+  }
+
+  document.getElementById('level').innerText=`Level: ${level}`;
+}
+
+// ==================== MOVEMENT ====================
+let keys={};
+document.addEventListener('keydown',e=>keys[e.key.toLowerCase()]=true);
+document.addEventListener('keyup',e=>keys[e.key.toLowerCase()]=false);
+function move(dx,dz){ player.position.x+=dx; player.position.z+=dz; }
+document.getElementById('up').onclick=()=>move(0,-0.3);
+document.getElementById('down').onclick=()=>move(0,0.3);
+document.getElementById('left').onclick=()=>move(-0.3,0);
+document.getElementById('right').onclick=()=>move(0.3,0);
+
+// ==================== ATTACK & LOOT ====================
+function attack(){
+  enemies.forEach((e,i)=>{
+    let dist=player.position.distanceTo(e.position);
+    if(dist<1.5){
+      e.hp-=(weaponType==='FISTS'?10:30);
+      e.material.color.set(0xffffff);
+      setTimeout(()=>e.material.color.set(e.type==='boss'?0x880000:0xff0000),100);
+      if(e.hp<=0){
+        if(e.type!=='boss') dropWeapon(e.position.x,e.position.z,'pistol');
+        scene.remove(e); enemies.splice(i,1);
+        if(e.type==='boss') spawnTaxi(player.position.x+5,player.position.z);
+      }
+    }
+  });
+}
+function loot(){
+  weapons.forEach((w,i)=>{ let dist=player.position.distanceTo(w.position);
+    if(dist<1.5){ weaponType=w.weaponType; hasGun=true; scene.remove(w); weapons.splice(i,1); } });
+  if(taxi){
+    let dist=player.position.distanceTo(taxi.position);
+    if(dist<2){ taxiActive=true; taxi=null; proceedToNextLevel(); }
+  }
+}
+document.getElementById('attack').onclick=attack;
+document.getElementById('loot').onclick=loot;
+
+// ==================== CAMERA ====================
+function updateCamera(){ camera.position.set(player.position.x,player.position.y+1.6,player.position.z);
+camera.lookAt(player.position.x,player.position.y+1.6,player.position.z+1); }
+
+// ==================== LEVEL PROGRESSION ====================
+function proceedToNextLevel(){
+  if(currentLevel<maxLevel){
+    currentLevel++; localStorage.setItem('ds_level',currentLevel);
+    let startX=player.position.x; let startZ=player.position.z;
+    let targetOffset=zoneOffsets[Math.floor((currentLevel-1)/5)];
+    let targetX=targetOffset.x; let targetZ=targetOffset.z;
+    let t=0;
+    let interval=setInterval(()=>{
+      t+=0.02; player.position.x=startX+(targetX-startX)*t; player.position.z=startZ+(targetZ-startZ)*t;
+      if(t>=1){ clearInterval(interval); loadLevel(currentLevel); }
+    },16);
+  } else { alert("Все уровни пройдены! Победа!"); }
+}
+
+// ==================== ANIMATION LOOP ====================
+function animate(){
+  requestAnimationFrame(animate);
+  if(keys['w']) move(0,-0.1);
+  if(keys['s']) move(0,0.1);
+  if(keys['a']) move(-0.1,0);
+  if(keys['d']) move(0.1,0);
+  updateCamera();
+  document.getElementById('hp').innerText=`HP: ${playerHP}`;
+  document.getElementById('weapon').innerText=`Weapon: ${weaponType}`;
+  document.getElementById('level').innerText=`Level: ${currentLevel}`;
+  renderer.render(scene,camera);
+}
+animate();
+
+// ==================== AUTO SAVE ====================
+setInterval(()=>{ localStorage.setItem('ds_hp',playerHP); localStorage.setItem('ds_weapon',weaponType);
+localStorage.setItem('ds_level',currentLevel); },5000);
+
+// ==================== INITIAL LEVEL ====================
+loadLevel(currentLevel);
+</script>
+</body>
+</html>
+
